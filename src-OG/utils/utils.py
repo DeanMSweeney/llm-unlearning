@@ -1,14 +1,21 @@
 import os
 import torch
 import torch.nn as nn
+import numpy as np
 import torch.utils.data as data
 import torch.optim as optim
 import torch.nn.functional as F
 from typing import Optional, Literal, Union, Tuple, Dict, List
 import logging
+import random
 
 logger = logging.getLogger(__name__)
 
+def set_random_seed(seed): 
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 def _get_checkpoint_dir(epoch, dedupe=''):
     """

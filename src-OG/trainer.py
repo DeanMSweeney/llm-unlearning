@@ -79,18 +79,18 @@ class Unbias(PCGUMixin):
         
         logger.info('retraining mlm')
 
-        if sim_batch_size is -1: 
-            sim_batch_size = batch_size
+        if self.sim_batch_size is -1: 
+            self.sim_batch_size =self.batch_size
 
-        if do_dynamic_gradient_selection: 
-            new_grad_calc = _maximize_grads
+        if self.do_dynamic_gradient_selection: 
+            self.which_grad = "neutral"
 
-        if sim_batch_size is not None and (sim_batch_size<=0 or sim_batch_size%batch_size!=0): 
-            raise ValueError(f'Batch size for computing similarity is invalid: {sim_batch_size}')
+        if self.sim_batch_size is not None and (self.sim_batch_size<=0 or self.sim_batch_size%batch_size!=0): 
+            raise ValueError(f'Batch size for computing similarity is invalid: {self.sim_batch_size}')
 
-        vocab_size = len(tokenizer)
-        params_map = get_params_map(model)
-        param_partition = create_param_partition(params_map, dim_to_agg=agg_dim)
+        vocab_size = len(self.tokenizer)
+        params_map = get_params_map(self.model)
+        param_partition = create_param_partition(params_map, dim_to_agg=self.agg_dim)
 
         for epoch in range(self.start_at_epoch, self.num_epochs):
             logger.info(f'On epoch {epoch+1}/{self.num_epochs}')
@@ -116,80 +116,70 @@ class Unbias(PCGUMixin):
 
                 # Process disadvantaged group sequences
                 if self.is_mlm: # masked 
-                    disadv_logits = self._mlm_backprop(model,
-                                        disadv_seqs,
-                                        disadv_att_mask,
-                                        inds,
-                                        disadv_target,
-                                        vocab_size,
-                                        device,
-                                        model_name=model_name,
+                    disadv_logits = self._mlm_backprop(
+                                        input_ids=disadv_seqs,
+                                        attention_mask=disadv_att_mask,
+                                        indices=inds,
+                                        target_tokens=disadv_target,
+                                        vocab_size=vocab_size,
                                         do_backprop=not do_dynamic_gradient_selection)[1]
                 else: # causal
-                    self._lm_backprop(model,
-                                        disadv_seqs,
-                                        disadv_att_mask,
-                                        disadv_labels,
-                                        device)
+                    self._lm_backprop(
+                                        input_ids=disadv_seqs,
+                                        attention_mask=disadv_att_mask,
+                                        labels=disadv_labels,)
 
                 # Capture gradients for disadvantaged group (static gradient selection)
                 if not do_dynamic_gradient_selection:
-                    disadv_grads = get_all_model_grads(model)
+                    disadv_grads = get_all_model_grads(self.model)
 
                 # Process advantaged group sequences
                 if self.is_mlm:
-                    adv_logits = self._mlm_backprop(model,
-                                        adv_seqs,
-                                        adv_att_mask,
-                                        inds,
-                                        adv_target,
-                                        vocab_size,
-                                        device,
-                                        model_name=model_name,
-                                        do_backprop=not do_dynamic_gradient_selection)[1]
+                    adv_logits = self._mlm_backprop(
+                                        input_ids=adv_seqs,
+                                        attention_mask=adv_att_mask,
+                                        indices=inds,
+                                        target_tokens=adv_target,
+                                        vocab_size=vocab_size,
+                                        do_backprop=not self.do_dynamic_gradient_selection,)[1]
                 else:
                     self._lm_backprop(model,
-                                        adv_seqs,
-                                        adv_att_mask,
-                                        adv_labels,
-                                        device)
+                                        input_ids=adv_seqs,
+                                        attention_mask=adv_att_mask,
+                                        labels=adv_labels,)
 
                 # Capture gradients for advantaged group (static gradient selection)
-                if not do_dynamic_gradient_selection:
-                    adv_grads = self._get_all_model_grads(model)
+                if not self.do_dynamic_gradient_selection:
+                    adv_grads = self._get_all_model_grads(self.model)
 
                 # Dynamic gradient selection: only update parameters where disadvantaged < advantaged
-                if do_dynamic_gradient_selection:
+                if self.do_dynamic_gradient_selection:
                     # Identify truly disadvantaged examples (lower logits than advantaged)
                     disadv_actually_disadv = disadv_logits < adv_logits
                     # Create multiplier: +1 for truly disadvantaged, -1 otherwise
                     multiplier = disadv_actually_disadv.float() * 2 - 1
 
                     # Recompute with weighted gradients for disadvantaged group
-                    self._mlm_backprop(model,
-                                        disadv_seqs,
-                                        disadv_att_mask,
-                                        inds,
-                                        disadv_target,
-                                        vocab_size,
-                                        device,
-                                        model_name=model_name,
+                    self._mlm_backprop(
+                                        input_ids=disadv_seqs,
+                                        attention_mask=disadv_att_mask,
+                                        indices=inds,
+                                        target_tokens=disadv_target,
+                                        vocab_size=vocab_size,
                                         do_backprop=True,
-                                        multiplier=multiplier)
-                    disadv_grads = get_all_model_grads(model)
+                                        multiplier=multiplier) # add multiplier here 
+                    disadv_grads = get_all_model_grads(self.model)
 
                     # Recompute with inverted weighted gradients for advantaged group
-                    self._mlm_backprop(model,
-                                        adv_seqs,
-                                        adv_att_mask,
-                                        inds,
-                                        adv_target,
-                                        vocab_size,
-                                        device,
-                                        model_name=model_name,
+                    self._mlm_backprop(
+                                        input_ids=adv_seqs,
+                                        attention_mask=adv_att_mask,
+                                        indices=inds,
+                                        target_tokens=adv_target,
+                                        vocab_size=vocab_size,
                                         do_backprop=True,
                                         multiplier=-multiplier)
-                    adv_grads = get_all_model_grads(model)
+                    adv_grads = get_all_model_grads(self.model)
 
                 # Accumulate gradients across batches
                 curr_disadv_grads = accumulate_grad(curr_disadv_grads, disadv_grads)
@@ -198,17 +188,28 @@ class Unbias(PCGUMixin):
                 curr_sim_batch_count += batch_size
 
                 # Apply optimizer step when similarity batch size is reached
-                if sim_batch_size is not None and curr_sim_batch_count >= sim_batch_size:
-                    self.reduce_bias(optimizer=optimizer, model_params_map=params_map)
+                if self.sim_batch_size is not None and curr_sim_batch_count >= self.sim_batch_size:
+                    self.reduce_bias(
+                        optimizer=optimizer, 
+                        model_params_map=params_map, 
+                        grads_1=curr_disadv_grads, 
+                        grads_2=curr_adv_grads, 
+                        param_partition=param_partition)
+                    
                     curr_sim_batch_count = 0
                     curr_disadv_grads = None
                     curr_adv_grads = None
 
             # Apply final optimizer step for the epoch if using accumulated gradients
-            if sim_batch_size is None:
-                self.reduce_bias(optimizer=optimizer, model_params_map=params_map)
+            if self.sim_batch_size is None:
+                self.reduce_bias(
+                        optimizer=optimizer, 
+                        model_params_map=params_map, 
+                        grads_1=curr_disadv_grads, 
+                        grads_2=curr_adv_grads, 
+                        param_partition=param_partition)
 
-            saved_model_dir = save_model(model, tokenizer, epoch+1, dedupe=dedupe)
+            saved_model_dir = save_model(model=self.model, tokenizer=self.tokenizer, epoch=epoch+1, dedupe=self.dedupe)
 
     
     def _mlm_backprop(
