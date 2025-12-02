@@ -10,18 +10,14 @@ import torch.utils.data as data
 import torch.optim as optim
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModelForPreTraining, AutoModelForMaskedLM
-import numpy as np
-import random
 import argparse
 import logging
-import os
 from tqdm import tqdm
-import json
 import sys
 from .utils.build_dataset import WGDataset
-from .utils.utils import set_random_seed, get_params_map, get_all_model_grads, accumulate_grad, create_param_partition
+from .utils.utils import set_random_seed
 from .utils.consts import PAD_TOKEN, MASK_TOKEN
-from trainer import Unbias
+from .trainer import Unbias
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +91,7 @@ def main(
     # Configure which gradient to use:
     # "negative" = minimize advantaged gender (default)
     # "positive" = maximize disadvantaged gender
-    which_grad = "negative" if use_advantaged_for_grad else "positive"
+    which_grad = "advantaged" if use_advantaged_for_grad else "disadvantaged"
 
     logger.info('Retraining now')
 
@@ -118,6 +114,8 @@ def main(
         dedupe=dedupe,  # Experiment name for checkpointing
         model_name=model_path_or_name
     )
+    
+    rt.retrain()
 
 if __name__=='__main__':
     # ============================================================================
@@ -203,9 +201,21 @@ if __name__=='__main__':
     dedupe = f"{dedupe_model_name}/{partition_usage}/{'inp' if agg_input else 'outp'}/{direction_selection}/{args.lr}/64/{args.k}"
 
     # Run main training loop
-    main(args.model_path_or_name, num_epochs=args.num_epochs, is_mlm=is_mlm, k=args.k,
-        proportion_dev=0.5, do_dynamic_gradient_selection=args.dynamic_gradient_selection,
-        sim_batch_size=sim_batch_size, use_advantaged_for_grad=use_advantaged_for_grad, agg_input=agg_input,
-        lr=args.lr, momentum=args.momentum, batch_size=args.batch_size, start_at_epoch=args.start_at, dedupe=dedupe)
+    main(
+        model_path_or_name=args.model_path_or_name, 
+        num_epochs=args.num_epochs, 
+        is_mlm=is_mlm, 
+        k=args.k,
+        proportion_dev=0.5,
+        do_dynamic_gradient_selection=args.dynamic_gradient_selection,
+        sim_batch_size=sim_batch_size, 
+        use_advantaged_for_grad=use_advantaged_for_grad, 
+        agg_input=agg_input,
+        lr=args.lr, 
+        momentum=args.momentum, 
+        batch_size=args.batch_size, 
+        start_at_epoch=args.start_at, 
+        dedupe=dedupe
+    )
 
 

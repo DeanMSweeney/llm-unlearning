@@ -1,7 +1,4 @@
 import torch
-import torch.nn as nn
-import torch.utils.data as data
-import torch.optim as optim
 import torch.nn.functional as F
 from typing import Optional, Literal, Union, Tuple, Dict, List
 
@@ -67,20 +64,19 @@ class PCGUMixin:
             The selected gradient based on self.which_grad strategy
         """
         # Use only the negative/forget gradient
-        if self.which_grad == "negative":
+        if self.which_grad == "advantaged":
             return self.grads_2
         # Use the negated positive/retain gradient
-        if self.which_grad == "positive":
+        if self.which_grad == "disadvantaged":
             return -self.grads_1
         # Use the negated sum of both gradients (neutral/balanced approach)
-        elif self.which_grad == "neutral":
+        elif self.which_grad == "combined":
             return -(self.grads_1+self.grads_2)
         else:
             raise AttributeError("Gradient method not selected")
         
     def update_model_param_grads(
         self,
-        optimizer,
         model_params_map,
         new_grad_calc,
     ):
@@ -90,12 +86,11 @@ class PCGUMixin:
 
         Args:
         ---------
-            optimizer: The optimizer managing the model parameters
             model_params_map: Dictionary mapping parameter names to parameter tensors
             new_grad_calc: Function for calculating new gradients (unused in current implementation)
         """
         # Zero out all gradients so unselected parameters remain at zero gradient
-        optimizer.zero_grad()
+        self.optimizer.zero_grad()
 
         # If specific parameters were selected (via top-k), only update those
         if self.params_to_keep is not None: 
@@ -119,7 +114,6 @@ class PCGUMixin:
 
     def reduce_bias(
         self,
-        optimizer,
         model_params_map,
         grads_1,
         grads_2,
@@ -131,7 +125,6 @@ class PCGUMixin:
 
         Args:
         ---------
-            optimizer: The optimizer for updating model parameters
             model_params_map: Dictionary mapping parameter names to parameter tensors
             grads_1: Gradients from the first objective (e.g., retain set)
             grads_2: Gradients from the second objective (e.g., forget set)
@@ -147,15 +140,13 @@ class PCGUMixin:
             # Select top k parameters based on gradient similarity
             self._top_k_params()
             self.update_model_param_grads(
-                optimizer=optimizer,
                 model_params_map=model_params_map,
             )
         # Otherwise, update all parameters
         else:
             self.update_model_param_grads(
-                optimizer=optimizer,
                 model_params_map=model_params_map,
             )
 
         # Apply the gradient updates to the model parameters
-        optimizer.step()
+        self.optimizer.step()

@@ -1,9 +1,3 @@
-import tqdm
-import torch
-import torch.nn as nn
-import torch.utils.data as data
-import torch.optim as optim
-import torch.nn.functional as F
 from typing import Optional, Literal, Union, Tuple, Dict, List
 import logging
 
@@ -55,7 +49,7 @@ class Unbias(PCGUMixin):
         sim_batch_size: int=-1,
         proportion_dev=0.5,
         k: int=10000,
-        which_grad: str="negative",
+        which_grad: str="advantaged",
     ):
       
         self.model = model
@@ -76,14 +70,16 @@ class Unbias(PCGUMixin):
         self.k = k
         self.which_grad = which_grad
         self.params_to_keep = None 
+    
         
+    def retrain(self):
         logger.info('retraining mlm')
-
+        
         if self.sim_batch_size is -1: 
             self.sim_batch_size =self.batch_size
 
         if self.do_dynamic_gradient_selection: 
-            self.which_grad = "neutral"
+            self.which_grad = "combined"
 
         if self.sim_batch_size is not None and (self.sim_batch_size<=0 or self.sim_batch_size%batch_size!=0): 
             raise ValueError(f'Batch size for computing similarity is invalid: {self.sim_batch_size}')
@@ -94,7 +90,7 @@ class Unbias(PCGUMixin):
 
         for epoch in range(self.start_at_epoch, self.num_epochs):
             logger.info(f'On epoch {epoch+1}/{self.num_epochs}')
-            model.train()
+            self.model.train()
 
             # Initialize batch counters and gradient accumulators
             curr_sim_batch_count = 0
@@ -112,7 +108,7 @@ class Unbias(PCGUMixin):
                 (disadv_labels, adv_labels)
                 ) = batch
 
-                optimizer.zero_grad()
+                self.optimizer.zero_grad()
 
                 # Process disadvantaged group sequences
                 if self.is_mlm: # masked 
@@ -122,7 +118,7 @@ class Unbias(PCGUMixin):
                                         indices=inds,
                                         target_tokens=disadv_target,
                                         vocab_size=vocab_size,
-                                        do_backprop=not do_dynamic_gradient_selection)[1]
+                                        do_backprop=not self.do_dynamic_gradient_selection)[1]
                 else: # causal
                     self._lm_backprop(
                                         input_ids=disadv_seqs,
@@ -130,7 +126,7 @@ class Unbias(PCGUMixin):
                                         labels=disadv_labels,)
 
                 # Capture gradients for disadvantaged group (static gradient selection)
-                if not do_dynamic_gradient_selection:
+                if not self.do_dynamic_gradient_selection:
                     disadv_grads = get_all_model_grads(self.model)
 
                 # Process advantaged group sequences
@@ -143,10 +139,10 @@ class Unbias(PCGUMixin):
                                         vocab_size=vocab_size,
                                         do_backprop=not self.do_dynamic_gradient_selection,)[1]
                 else:
-                    self._lm_backprop(model,
-                                        input_ids=adv_seqs,
-                                        attention_mask=adv_att_mask,
-                                        labels=adv_labels,)
+                    self._lm_backprop(
+                        input_ids=adv_seqs,
+                        attention_mask=adv_att_mask,
+                        labels=adv_labels,)
 
                 # Capture gradients for advantaged group (static gradient selection)
                 if not self.do_dynamic_gradient_selection:
@@ -161,36 +157,37 @@ class Unbias(PCGUMixin):
 
                     # Recompute with weighted gradients for disadvantaged group
                     self._mlm_backprop(
-                                        input_ids=disadv_seqs,
-                                        attention_mask=disadv_att_mask,
-                                        indices=inds,
-                                        target_tokens=disadv_target,
-                                        vocab_size=vocab_size,
-                                        do_backprop=True,
-                                        multiplier=multiplier) # add multiplier here 
+                        input_ids=disadv_seqs,
+                        attention_mask=disadv_att_mask,
+                        indices=inds,
+                        target_tokens=disadv_target,
+                        vocab_size=vocab_size,
+                        do_backprop=True,
+                        multiplier=multiplier) # add multiplier here 
+                    
                     disadv_grads = get_all_model_grads(self.model)
 
                     # Recompute with inverted weighted gradients for advantaged group
                     self._mlm_backprop(
-                                        input_ids=adv_seqs,
-                                        attention_mask=adv_att_mask,
-                                        indices=inds,
-                                        target_tokens=adv_target,
-                                        vocab_size=vocab_size,
-                                        do_backprop=True,
-                                        multiplier=-multiplier)
+                        input_ids=adv_seqs,
+                        attention_mask=adv_att_mask,
+                        indices=inds,
+                        target_tokens=adv_target,
+                        vocab_size=vocab_size,
+                        do_backprop=True,
+                        multiplier=-multiplier)
+                    
                     adv_grads = get_all_model_grads(self.model)
 
                 # Accumulate gradients across batches
                 curr_disadv_grads = accumulate_grad(curr_disadv_grads, disadv_grads)
                 curr_adv_grads = accumulate_grad(curr_adv_grads, adv_grads)
 
-                curr_sim_batch_count += batch_size
+                curr_sim_batch_count += self.batch_size
 
                 # Apply optimizer step when similarity batch size is reached
                 if self.sim_batch_size is not None and curr_sim_batch_count >= self.sim_batch_size:
                     self.reduce_bias(
-                        optimizer=optimizer, 
                         model_params_map=params_map, 
                         grads_1=curr_disadv_grads, 
                         grads_2=curr_adv_grads, 
@@ -203,7 +200,6 @@ class Unbias(PCGUMixin):
             # Apply final optimizer step for the epoch if using accumulated gradients
             if self.sim_batch_size is None:
                 self.reduce_bias(
-                        optimizer=optimizer, 
                         model_params_map=params_map, 
                         grads_1=curr_disadv_grads, 
                         grads_2=curr_adv_grads, 
