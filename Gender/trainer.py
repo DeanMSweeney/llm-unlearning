@@ -2,8 +2,8 @@ from typing import Optional, Literal, Union, Tuple, Dict, List
 import logging
 
 
-from .utils.mixins import PCGUMixin
-from .utils.utils import save_model, create_param_partition, get_params_map, get_all_model_grads, accumulate_grad
+from utils.mixins import PCGUMixin
+from utils.utils import save_model, create_param_partition, get_params_map, get_all_model_grads, accumulate_grad
 
 logger = logging.getLogger(__name__)
 
@@ -75,13 +75,13 @@ class Unbias(PCGUMixin):
     def retrain(self):
         logger.info('retraining mlm')
         
-        if self.sim_batch_size is -1: 
+        if self.sim_batch_size == -1: 
             self.sim_batch_size =self.batch_size
 
         if self.do_dynamic_gradient_selection: 
             self.which_grad = "combined"
 
-        if self.sim_batch_size is not None and (self.sim_batch_size<=0 or self.sim_batch_size%batch_size!=0): 
+        if self.sim_batch_size is not None and (self.sim_batch_size<=0 or self.sim_batch_size%self.batch_size!=0): 
             raise ValueError(f'Batch size for computing similarity is invalid: {self.sim_batch_size}')
 
         vocab_size = len(self.tokenizer)
@@ -146,7 +146,7 @@ class Unbias(PCGUMixin):
 
                 # Capture gradients for advantaged group (static gradient selection)
                 if not self.do_dynamic_gradient_selection:
-                    adv_grads = self._get_all_model_grads(self.model)
+                    adv_grads = get_all_model_grads(self.model)
 
                 # Dynamic gradient selection: only update parameters where disadvantaged < advantaged
                 if self.do_dynamic_gradient_selection:
