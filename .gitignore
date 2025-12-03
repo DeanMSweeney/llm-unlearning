@@ -2,3 +2,7 @@ models/
 src/models-trial/
 __pycache__/
 *.pyc
+
+*results*/
+logs*/
+models*/
