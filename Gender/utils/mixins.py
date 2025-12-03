@@ -65,13 +65,13 @@ class PCGUMixin:
         """
         # Use only the negative/forget gradient
         if self.which_grad == "advantaged":
-            return self.grads_2
+            return pos_grad
         # Use the negated positive/retain gradient
         if self.which_grad == "disadvantaged":
-            return -self.grads_1
+            return neg_grad
         # Use the negated sum of both gradients (neutral/balanced approach)
         elif self.which_grad == "combined":
-            return -(self.grads_1+self.grads_2)
+            return -(pos_grad + neg_grad)
         else:
             raise AttributeError("Gradient method not selected")
         
@@ -88,7 +88,7 @@ class PCGUMixin:
             model_params_map: Dictionary mapping parameter names to parameter tensors
         """
         # Zero out all gradients so unselected parameters remain at zero gradient
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=False)
 
         # If specific parameters were selected (via top-k), only update those
         if self.params_to_keep is not None: 
@@ -100,7 +100,7 @@ class PCGUMixin:
                     param.grad.data.copy_(new_grad.data)
                 # If the parameter is partitioned, only update specific indices
                 else:
-                    new_grad = self._rewrite_grad(pos_grad=self.grads_1[param_name], neg_grad=self.grads_2[param_name])
+                    new_grad = self._rewrite_grad(pos_grad=self.grads_1[param_name][indices], neg_grad=self.grads_2[param_name][indices])
                     param.grad[indices] = new_grad.to(self.device)
         # If no specific parameters selected, update all parameters with valid gradients
         else: 
@@ -132,6 +132,7 @@ class PCGUMixin:
         self.param_partition = param_partition
         self.grads_1 = grads_1
         self.grads_2 = grads_2
+        self.params_to_keep = None
 
         # If k is specified, perform selective parameter updating
         if self.k is not None:
