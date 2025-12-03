@@ -154,8 +154,11 @@ def write_sents_to_file(filename, sents):
 
 # Write all sentences to a combined file
 # Filename includes "_unsh" suffix if data is not shuffled
-write_sents_to_file(f'../data/stereoset_eval/all{"" if SHUFFLE else "_unsh"}.txt', all_sents)
+output_dir = "./stereoset_eval"
+os.makedirs(output_dir, exist_ok=True)
+
+write_sents_to_file(f'./stereoset_eval/all{"" if SHUFFLE else "_unsh"}.txt', all_sents)
 
 # Write domain-specific files for each bias type (gender, profession, race, religion)
 for domain, sents in sents_per_domain.items():
-    write_sents_to_file(f'../data/stereoset_eval/{domain}{"" if SHUFFLE else "_unsh"}.txt', sents)
+    write_sents_to_file(f'./stereoset_eval/{domain}{"" if SHUFFLE else "_unsh"}.txt', sents)

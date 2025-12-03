@@ -3,7 +3,7 @@ Main entry point for bias mitigation through gradient-based unlearning.
 Uses WinoGender dataset to reduce gender bias in language models by selectively
 updating parameters to reduce the model's preference for stereotypical gender associations.
 """
-
+import os
 from sqlite3 import NotSupportedError
 import torch
 import torch.utils.data as data
@@ -19,7 +19,10 @@ from utils.utils import set_random_seed
 from utils.consts import PAD_TOKEN, MASK_TOKEN
 from trainer import Unbias
 
+print("Let's begin...")
 logger = logging.getLogger(__name__)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 
 def main(
     model_path_or_name: str,  # HuggingFace model name or local path
