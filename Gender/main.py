@@ -124,7 +124,7 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser(description='Bias mitigation through gradient-based unlearning on WinoGender dataset')
 
     # Model configuration
-    parser.add_argument('-m', type=str, required=True, dest='model_path_or_name',
+    parser.add_argument('-m', type=str, default='bert-base-uncased', required=True, dest='model_path_or_name',
                         help='HuggingFace model name or path (e.g., bert-base-uncased)')
 
     # Optimization parameters
