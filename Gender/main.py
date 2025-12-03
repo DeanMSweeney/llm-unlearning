@@ -14,10 +14,10 @@ import argparse
 import logging
 from tqdm import tqdm
 import sys
-from .utils.build_dataset import WGDataset
-from .utils.utils import set_random_seed
-from .utils.consts import PAD_TOKEN, MASK_TOKEN
-from .trainer import Unbias
+from utils.build_dataset import WGDataset
+from utils.utils import set_random_seed
+from utils.consts import PAD_TOKEN, MASK_TOKEN
+from trainer import Unbias
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,7 @@ def main(
         model=model,
         tokenizer=tokenizer,
         optimizer=optimizer,
+        dataloader=dataloader,
         device=device,
         batch_size=batch_size,
         k=k,  # Number of top-k parameters to update
@@ -124,7 +125,7 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser(description='Bias mitigation through gradient-based unlearning on WinoGender dataset')
 
     # Model configuration
-    parser.add_argument('-m', type=str, default='bert-base-uncased', required=True, dest='model_path_or_name',
+    parser.add_argument('-m', type=str, required=True, dest='model_path_or_name',
                         help='HuggingFace model name or path (e.g., bert-base-uncased)')
 
     # Optimization parameters

@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 import torch.utils.data as data
 import math
-from consts import PAD_VALUE
+from utils.consts import PAD_VALUE
 
 # ============================================================================
 # File I/O Utility Functions

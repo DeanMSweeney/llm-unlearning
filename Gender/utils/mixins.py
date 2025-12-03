@@ -44,12 +44,12 @@ class PCGUMixin:
         # Select the top k most influential parameters based on similarity scores
         # Stack all similarity scores into a single tensor
         sim_stack = torch.stack(scores)
-        self.param_partition = torch.Tensor(self.param_partition)
 
         # Select the k parameters with the smallest similarity scores (largest=False)
         # These are the parameters where grad_1 and grad_2 disagree the most
-        k_value, k_ind = sim_stack.topk(self.k, largest=False, sorted=True)
-        self.params_to_keep = [self.param_partition[k_ind].detach().cpu()]
+        top_k_result = sim_stack.topk(self.k, largest=False, sorted=True)
+        target_indices = [ind.item() for ind in top_k_result[1]]
+        self.params_to_keep = [self.param_partition[ind] for ind in target_indices]
 
     def _rewrite_grad(self, pos_grad, neg_grad):
         """
@@ -78,7 +78,6 @@ class PCGUMixin:
     def update_model_param_grads(
         self,
         model_params_map,
-        new_grad_calc,
     ):
         """
         Updates the gradients of model parameters based on the selected parameters
@@ -87,7 +86,6 @@ class PCGUMixin:
         Args:
         ---------
             model_params_map: Dictionary mapping parameter names to parameter tensors
-            new_grad_calc: Function for calculating new gradients (unused in current implementation)
         """
         # Zero out all gradients so unselected parameters remain at zero gradient
         self.optimizer.zero_grad()
