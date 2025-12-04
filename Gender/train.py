@@ -4,15 +4,12 @@ Uses WinoGender dataset to reduce gender bias in language models by selectively
 updating parameters to reduce the model's preference for stereotypical gender associations.
 """
 import os
-from sqlite3 import NotSupportedError
 import torch
 import torch.utils.data as data
 import torch.optim as optim
-import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModelForPreTraining, AutoModelForMaskedLM
+from transformers import AutoTokenizer, AutoModelForPreTraining
 import argparse
 import logging
-from tqdm import tqdm
 import sys
 from utils.build_dataset import WGDataset
 from utils.utils import set_random_seed
@@ -33,7 +30,6 @@ def main(
     sim_batch_size: int = -1,  # Batch size for similarity computation (-1 = use per-batch params)
     use_advantaged_for_grad: bool=True,  # If True, minimize advantaged gender; if False, maximize disadvantaged
     agg_input: bool=True,  # If True, aggregate gradients at input layer; if False, at output layer
-    proportion_dev=0.75,  # Proportion of data used for dev set
     do_dynamic_gradient_selection: bool=False,  # Dynamically choose which gender to target
     lr: float = 1e-5,  # Learning rate
     momentum: float = 0.9,  # SGD momentum
@@ -61,15 +57,15 @@ def main(
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    # Validate model type (currently only MLMs are supported)
+    if not is_mlm:
+        raise ValueError('Non-MLM models are not currently supported')
+
     # Load tokenizer (RoBERTa needs special handling for spaces)
-    if is_mlm:
-        if 'roberta' in model_path_or_name:
-            tokenizer = AutoTokenizer.from_pretrained(model_path_or_name, add_prefix_space=True)
-        else:
-            tokenizer = AutoTokenizer.from_pretrained(model_path_or_name)
+    if 'roberta' in model_path_or_name:
+        tokenizer = AutoTokenizer.from_pretrained(model_path_or_name, add_prefix_space=True)
     else:
-        tokenizer = AutoTokenizer.from_pretrained(model_path_or_name, pad_token=PAD_TOKEN, mask_token=MASK_TOKEN)
-        raise ValueError('No non-mlms currently')
+        tokenizer = AutoTokenizer.from_pretrained(model_path_or_name)
 
     # Load pre-trained model
     model = AutoModelForPreTraining.from_pretrained(model_path_or_name)
@@ -112,7 +108,6 @@ def main(
         num_epochs=num_epochs,
         sim_batch_size=sim_batch_size,
         which_grad=which_grad,  # Which gradient direction to use
-        proportion_dev=proportion_dev,
         do_dynamic_gradient_selection=do_dynamic_gradient_selection,
         agg_dim=agg_dim,  # Dimension for gradient aggregation
         start_at_epoch=start_at_epoch,
@@ -207,11 +202,10 @@ if __name__=='__main__':
 
     # Run main training loop
     main(
-        model_path_or_name=args.model_path_or_name, 
-        num_epochs=args.num_epochs, 
-        is_mlm=is_mlm, 
+        model_path_or_name=args.model_path_or_name,
+        num_epochs=args.num_epochs,
+        is_mlm=is_mlm,
         k=args.k,
-        proportion_dev=0.5,
         do_dynamic_gradient_selection=args.dynamic_gradient_selection,
         sim_batch_size=sim_batch_size, 
         use_advantaged_for_grad=use_advantaged_for_grad, 

@@ -7,13 +7,13 @@ import random
 
 logger = logging.getLogger(__name__)
 
-def set_random_seed(seed): 
+def set_random_seed(seed: int) -> None: 
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-def _get_checkpoint_dir(epoch, dedupe=''):
+def _get_checkpoint_dir(epoch: int, dedupe: str = '') -> str:
     """
     Generate the checkpoint directory path for a given epoch.
 
@@ -24,13 +24,13 @@ def _get_checkpoint_dir(epoch, dedupe=''):
 
     Returns:
         String path to the checkpoint directory
-
-    Note:
-        TODO: make this better, for now it's usable (i.e., it should work better for restarting during a middle epoch)
     """
-    return f'models/{dedupe}/model_{epoch}'
+    if dedupe:
+        return f'models/{dedupe}/model_{epoch}'
+    else:
+        return f'models/model_{epoch}'
 
-def save_model(model, tokenizer, epoch, dedupe=''):
+def save_model(model, tokenizer, epoch: int, dedupe: str = '') -> str:
     """
     Save a model and tokenizer checkpoint to disk.
 
@@ -51,7 +51,7 @@ def save_model(model, tokenizer, epoch, dedupe=''):
     tokenizer.save_pretrained(output_dir)
     return output_dir
 
-def _get_all_indices(shape, dim_to_agg):
+def _get_all_indices(shape: Tuple[int, ...], dim_to_agg: int) -> List[Tuple]:
     """
     Generate all index combinations for parameter partitioning.
 
@@ -94,7 +94,7 @@ def _get_all_indices(shape, dim_to_agg):
     init_inds = (0,)*dims
     return _get_all_indices_helper(init_inds, 0)
 
-def create_param_partition(params, dim_to_agg=-1):
+def create_param_partition(params: Dict[str, torch.nn.Parameter], dim_to_agg: int = -1) -> List[Tuple[str, Optional[Tuple]]]:
     """
     Partition model parameters into vectors for gradient-based selection.
 
@@ -137,7 +137,7 @@ def create_param_partition(params, dim_to_agg=-1):
 
     return param_partition
 
-def get_params_map(model):
+def get_params_map(model) -> Dict[str, torch.nn.Parameter]:
     """
     Create a dictionary mapping parameter names to parameter tensors.
 
@@ -153,7 +153,7 @@ def get_params_map(model):
         params_map[param_name] = param
     return params_map
 
-def get_all_model_grads(model, clear_grads_after=False):
+def get_all_model_grads(model, clear_grads_after: bool = False) -> Dict[str, Optional[torch.Tensor]]:
     """
     Extract all gradients from a model's parameters.
 
@@ -178,21 +178,23 @@ def get_all_model_grads(model, clear_grads_after=False):
             try:
                 # Detach and move gradient to CPU for storage
                 param_grad = param.grad.detach().cpu()
-            except:
+            except (AttributeError, RuntimeError):
                 # Gradient doesn't exist (parameter wasn't used in forward/backward pass)
+                # AttributeError: param.grad is None
+                # RuntimeError: gradient computation issues
                 problems.append(f'{i}: {param_name}')
                 param_grad = None
             param_grads[param_name] = param_grad
 
     if problems:
-        logger.debug(f'Problems: {problems}')
+        logger.debug(f'Parameters without gradients: {problems}')
 
     if clear_grads_after:
         model.zero_grad()
 
     return param_grads
 
-def accumulate_grad(accumulator_grad, grad):
+def accumulate_grad(accumulator_grad: Optional[Dict[str, Optional[torch.Tensor]]], grad: Dict[str, Optional[torch.Tensor]]) -> Dict[str, Optional[torch.Tensor]]:
     """
     Accumulate gradients across multiple batches.
 
@@ -216,15 +218,15 @@ def accumulate_grad(accumulator_grad, grad):
 
     # Add gradients element-wise for each parameter
     for param_name, curr_grad_val in accumulator_grad.items():
-        # Ensure both dicts have consistent None/non-None gradients
-        if (curr_grad_val is None) != (grad[param_name] is None):
-            raise RuntimeError(f'Values not same none-ness for param {param_name}')
+        new_grad_val = grad[param_name]
 
-        if curr_grad_val is None:
-            # Both are None, keep as None
-            accumulator_grad[param_name] = grad[param_name]
-        else:
-            # Sum the gradients and detach to prevent gradient tracking
-            accumulator_grad[param_name] = (curr_grad_val + grad[param_name]).detach()
+        # Ensure both dicts have consistent None/non-None gradients
+        if (curr_grad_val is None) != (new_grad_val is None):
+            raise RuntimeError(f'Inconsistent gradient existence for param {param_name}')
+
+        # Sum the gradients if they exist, otherwise keep as None
+        if curr_grad_val is not None:
+            accumulator_grad[param_name] = (curr_grad_val + new_grad_val).detach()
+        # If both are None, no action needed (already None in accumulator)
 
     return accumulator_grad

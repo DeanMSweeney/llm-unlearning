@@ -20,14 +20,15 @@ class Unbias(PCGUMixin):
         optimizer: Optimization algorithm
         dataloader: DataLoader for training data
         batch_size: Number of samples per batch
+        num_epochs: Number of training epochs
         device: Device to run training on (CPU/GPU)
+        is_mlm: Whether using masked language modeling (True) or causal language modeling (False)
         do_dynamic_gradient_selection: Whether to dynamically select parameters based on gradients
         dedupe: Deduplication strategy identifier
         model_name: Name/identifier of the model being trained
         agg_dim: Dimension to aggregate gradients along
         start_at_epoch: Epoch to start training from
         sim_batch_size: Batch size for similarity computations (-1 for default)
-        proportion_dev: Proportion of data to use for development/validation
         k: Number of top parameters to keep for gradient selection
         which_grad: Type of gradients to use ('negative' for unlearning)
     
@@ -39,7 +40,7 @@ class Unbias(PCGUMixin):
         optimizer,
         dataloader,
         batch_size: int,
-        num_epochs, 
+        num_epochs: int,
         device,
         is_mlm: bool=True,
         do_dynamic_gradient_selection: bool=False,
@@ -48,11 +49,9 @@ class Unbias(PCGUMixin):
         agg_dim: int=-1,
         start_at_epoch: int=0,
         sim_batch_size: int=-1,
-        proportion_dev=0.5,
         k: int=10000,
         which_grad: str="advantaged",
     ):
-      
         self.model = model
         self.tokenizer = tokenizer
         self.optimizer = optimizer
@@ -67,7 +66,6 @@ class Unbias(PCGUMixin):
         self.agg_dim = agg_dim
         self.start_at_epoch = start_at_epoch
         self.sim_batch_size = sim_batch_size
-        self.proportion_dev = proportion_dev
         self.k = k
         self.which_grad = which_grad
         self.params_to_keep = None 
@@ -79,18 +77,22 @@ class Unbias(PCGUMixin):
         if self.sim_batch_size == -1: 
             self.sim_batch_size =self.batch_size
 
-        if self.do_dynamic_gradient_selection: 
+        if self.do_dynamic_gradient_selection:
             self.which_grad = "combined"
 
-        if self.sim_batch_size is not None and (self.sim_batch_size<=0 or self.sim_batch_size%self.batch_size!=0): 
-            raise ValueError(f'Batch size for computing similarity is invalid: {self.sim_batch_size}')
+        # Validate sim_batch_size if specified
+        if self.sim_batch_size is not None:
+            if self.sim_batch_size <= 0:
+                raise ValueError(f'sim_batch_size must be positive, got: {self.sim_batch_size}')
+            if self.sim_batch_size % self.batch_size != 0:
+                raise ValueError(f'sim_batch_size ({self.sim_batch_size}) must be divisible by batch_size ({self.batch_size})')
 
         vocab_size = len(self.tokenizer)
         params_map = get_params_map(self.model)
         param_partition = create_param_partition(params_map, dim_to_agg=self.agg_dim)
 
         for epoch in (range(self.start_at_epoch, self.num_epochs)):
-            #logger.info(f'On epoch {epoch+1}/{self.num_epochs}')
+            logger.info(f'On epoch {epoch+1}/{self.num_epochs}')
             self.model.train()
 
             # Initialize batch counters and gradient accumulators
@@ -152,9 +154,9 @@ class Unbias(PCGUMixin):
                 # Dynamic gradient selection: only update parameters where disadvantaged < advantaged
                 if self.do_dynamic_gradient_selection:
                     # Identify truly disadvantaged examples (lower logits than advantaged)
-                    disadv_actually_disadv = disadv_logits < adv_logits
+                    is_truly_disadvantaged = disadv_logits < adv_logits
                     # Create multiplier: +1 for truly disadvantaged, -1 otherwise
-                    multiplier = disadv_actually_disadv.float() * 2 - 1
+                    multiplier = is_truly_disadvantaged.float() * 2 - 1
 
                     # Recompute with weighted gradients for disadvantaged group
                     self._mlm_backprop(
@@ -201,12 +203,13 @@ class Unbias(PCGUMixin):
             # Apply final optimizer step for the epoch if using accumulated gradients
             if self.sim_batch_size is None:
                 self.reduce_bias(
-                        model_params_map=params_map, 
-                        grads_1=curr_disadv_grads, 
-                        grads_2=curr_adv_grads, 
+                        model_params_map=params_map,
+                        grads_1=curr_disadv_grads,
+                        grads_2=curr_adv_grads,
                         param_partition=param_partition)
 
             saved_model_dir = save_model(model=self.model, tokenizer=self.tokenizer, epoch=epoch+1, dedupe=self.dedupe)
+            logger.info(f'Epoch {epoch+1} complete, model saved to {saved_model_dir}')
 
     
     def _mlm_backprop(
@@ -241,11 +244,11 @@ class Unbias(PCGUMixin):
         target_tokens = target_tokens.to(self.device)
         attention_mask = attention_mask.to(self.device)
 
-        self.model.zero_grad()
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
 
-        # Extract logits based on model architecture (BERT vs RoBERTa)
-        if 'roberta' not in self.model_name:
+        # Extract logits based on model output structure
+        # RoBERTa models use 'logits' attribute, BERT models use 'prediction_logits'
+        if hasattr(outputs, 'prediction_logits'):
             logits = outputs.prediction_logits
         else:
             logits = outputs.logits
@@ -256,9 +259,12 @@ class Unbias(PCGUMixin):
         logits = logits.gather(1, indices)
 
         # Handle shape for single-item batches
-        unsqueeze_later = logits.shape[0]==1
+        # squeeze() removes all size-1 dimensions, which can eliminate the batch dimension
+        # when batch_size=1. We track this case to restore the dimension afterward.
+        unsqueeze_later = logits.shape[0] == 1
         logits = logits.squeeze()
         if unsqueeze_later:
+            # Restore batch dimension for consistency
             logits = logits.unsqueeze(0)
         logits = logits.gather(1, target_tokens)
 
@@ -296,7 +302,6 @@ class Unbias(PCGUMixin):
         attention_mask = attention_mask.to(self.device)
         labels = labels.to(self.device)
 
-        self.model.zero_grad()
         outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
 
         # Negate loss for gradient ascent (unlearning)

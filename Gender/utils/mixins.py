@@ -6,7 +6,7 @@ from typing import Optional, Literal, Union, Tuple, Dict, List
 # Implements selective parameter updating based on gradient similarity analysis
 class PCGUMixin:
     
-    def _top_k_params(self) -> List[float]:
+    def _top_k_params(self) -> None:
         """
         Selects the top k most influential parameters based on gradient similarity.
         Parameters with lower cosine similarity between grad_1 and grad_2 are considered
@@ -21,24 +21,24 @@ class PCGUMixin:
 
         # Compute similarity scores for each parameter partition
         scores = []
-        for param_name, indices in self.param_partition: 
+        for param_name, indices in self.param_partition:
             # Retrieve gradients for the current parameter
-            self.grad_1 = self.grads_1[param_name]
-            self.grad_2 = self.grads_2[param_name]
+            grad_1 = self.grads_1[param_name]
+            grad_2 = self.grads_2[param_name]
 
             # If gradients don't exist, assign a large similarity score to exclude this parameter
-            if self.grad_1 is None or self.grad_2 is None:
-                scores.append(torch.Tensor([5]).squeeze())
+            if grad_1 is None or grad_2 is None:
+                scores.append(torch.tensor(5.0))
                 continue
 
             # If this parameter is partitioned, extract the relevant gradient indices
             if indices is not None:
-                self.grad_1 = self.grad_1[indices]
-                self.grad_2 = self.grad_2[indices]
+                grad_1 = grad_1[indices]
+                grad_2 = grad_2[indices]
 
             # Compute cosine similarity between the two gradients
             # Lower similarity indicates more conflicting updates (more influential)
-            cosine_sim = F.cosine_similarity(self.grad_1, self.grad_2, dim=-1).detach().cpu()
+            cosine_sim = F.cosine_similarity(grad_1, grad_2, dim=-1).detach().cpu()
             scores.append(cosine_sim)
 
         # Select the top k most influential parameters based on similarity scores
@@ -51,14 +51,14 @@ class PCGUMixin:
         target_indices = [ind.item() for ind in top_k_result[1]]
         self.params_to_keep = [self.param_partition[ind] for ind in target_indices]
 
-    def _rewrite_grad(self, adv_grad, disadv_grad):
+    def _rewrite_grad(self, adv_grad: torch.Tensor, disadv_grad: torch.Tensor) -> torch.Tensor:
         """
         Determines which gradient to use for parameter updates based on the selected strategy.
 
         Args:
         ---------
-            pos_grad: Gradient from the positive/retain set
-            neg_grad: Gradient from the negative/forget set
+            adv_grad: Gradient from the advantaged group
+            disadv_grad: Gradient from the disadvantaged group
 
         Returns:
             The selected gradient based on self.which_grad strategy
@@ -77,8 +77,8 @@ class PCGUMixin:
         
     def update_model_param_grads(
         self,
-        model_params_map,
-    ):
+        model_params_map: Dict[str, torch.nn.Parameter],
+    ) -> None:
         """
         Updates the gradients of model parameters based on the selected parameters
         and gradient rewriting strategy.
@@ -112,11 +112,11 @@ class PCGUMixin:
                     
     def reduce_bias(
         self,
-        model_params_map,
-        grads_1,
-        grads_2,
-        param_partition=None,
-    ):
+        model_params_map: Dict[str, torch.nn.Parameter],
+        grads_1: Dict[str, torch.Tensor],
+        grads_2: Dict[str, torch.Tensor],
+        param_partition: Optional[List[Tuple]] = None,
+    ) -> None:
         """
         Main method to perform bias reduction through selective parameter updating.
         Orchestrates the entire process of parameter selection, gradient rewriting, and optimization.
@@ -134,8 +134,8 @@ class PCGUMixin:
         self.grads_2 = grads_2
         self.params_to_keep = None
 
-        # If k is specified, perform selective parameter updating
-        if self.k is not None:
+        # If k is specified and positive, perform selective parameter updating
+        if self.k is not None and self.k > 0:
             # Select top k parameters based on gradient similarity
             self._top_k_params()
             self.update_model_param_grads(
