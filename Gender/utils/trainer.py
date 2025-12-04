@@ -89,7 +89,7 @@ class Unbias(PCGUMixin):
         params_map = get_params_map(self.model)
         param_partition = create_param_partition(params_map, dim_to_agg=self.agg_dim)
 
-        for epoch in tqdm(range(self.start_at_epoch, self.num_epochs)):
+        for epoch in (range(self.start_at_epoch, self.num_epochs)):
             #logger.info(f'On epoch {epoch+1}/{self.num_epochs}')
             self.model.train()
 

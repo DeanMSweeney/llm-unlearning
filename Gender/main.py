@@ -17,7 +17,7 @@ import sys
 from utils.build_dataset import WGDataset
 from utils.utils import set_random_seed
 from utils.consts import PAD_TOKEN, MASK_TOKEN
-from trainer import Unbias
+from utils.trainer import Unbias
 
 print("Let's begin...")
 logger = logging.getLogger(__name__)

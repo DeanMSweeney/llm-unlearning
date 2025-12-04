@@ -51,7 +51,7 @@ class PCGUMixin:
         target_indices = [ind.item() for ind in top_k_result[1]]
         self.params_to_keep = [self.param_partition[ind] for ind in target_indices]
 
-    def _rewrite_grad(self, pos_grad, neg_grad):
+    def _rewrite_grad(self, adv_grad, disadv_grad):
         """
         Determines which gradient to use for parameter updates based on the selected strategy.
 
@@ -65,13 +65,13 @@ class PCGUMixin:
         """
         # Use only the negative/forget gradient
         if self.which_grad == "advantaged":
-            return pos_grad
+            return adv_grad
         # Use the negated positive/retain gradient
         if self.which_grad == "disadvantaged":
-            return neg_grad
+            return -disadv_grad
         # Use the negated sum of both gradients (neutral/balanced approach)
         elif self.which_grad == "combined":
-            return -(pos_grad + neg_grad)
+            return -(adv_grad + disadv_grad)
         else:
             raise AttributeError("Gradient method not selected")
         
@@ -96,11 +96,11 @@ class PCGUMixin:
                 param = model_params_map[param_name]
                 # If the parameter is not partitioned, update the entire gradient
                 if indices is None:
-                    new_grad = self._rewrite_grad(pos_grad=self.grads_1[param_name], neg_grad=self.grads_2[param_name])
+                    new_grad = self._rewrite_grad(adv_grad=self.grads_2[param_name], disadv_grad=self.grads_1[param_name])
                     param.grad.data.copy_(new_grad.data)
                 # If the parameter is partitioned, only update specific indices
                 else:
-                    new_grad = self._rewrite_grad(pos_grad=self.grads_1[param_name][indices], neg_grad=self.grads_2[param_name][indices])
+                    new_grad = self._rewrite_grad(adv_grad=self.grads_2[param_name][indices], disadv_grad=self.grads_1[param_name][indices])
                     param.grad[indices] = new_grad.to(self.device)
         # If no specific parameters selected, update all parameters with valid gradients
         else: 
@@ -109,7 +109,7 @@ class PCGUMixin:
                 if self.grads_1[param_name] is not None and self.grads_2[param_name] is not None:
                     new_grad = self._rewrite_grad(self.grads_1[param_name], self.grads_2[param_name])
                     param.grad.data.copy_(new_grad.data)
-
+                    
     def reduce_bias(
         self,
         model_params_map,
