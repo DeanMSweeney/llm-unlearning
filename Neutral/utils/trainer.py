@@ -121,11 +121,6 @@ class Unbias(PCGUMixin):
                                         target_tokens=male_target,
                                         vocab_size=vocab_size,
                                         do_backprop=not self.do_dynamic_gradient_selection)[1]
-                else: # causal
-                    self._lm_backprop(
-                                        input_ids=male_seqs,
-                                        attention_mask=male_att_mask,
-                                        labels=male_labels,)
 
                 # Capture gradients for male variant (static gradient selection)
                 if not self.do_dynamic_gradient_selection:
@@ -138,13 +133,7 @@ class Unbias(PCGUMixin):
                                         attention_mask=female_att_mask,
                                         indices=inds,
                                         target_tokens=female_target,
-                                        vocab_size=vocab_size,
-                                        do_backprop=not self.do_dynamic_gradient_selection,)[1]
-                else:
-                    self._lm_backprop(
-                        input_ids=female_seqs,
-                        attention_mask=female_att_mask,
-                        labels=female_labels,)
+                                        vocab_size=vocab_size,)
 
                 # Capture gradients for female variant (static gradient selection)
                 if not self.do_dynamic_gradient_selection:
@@ -159,11 +148,6 @@ class Unbias(PCGUMixin):
                                         target_tokens=neutral_target,
                                         vocab_size=vocab_size,
                                         do_backprop=not self.do_dynamic_gradient_selection,)[1]
-                else:
-                    self._lm_backprop(
-                        input_ids=neutral_seqs,
-                        attention_mask=neutral_att_mask,
-                        labels=neutral_labels,)
 
                 # Capture gradients for neutral variant (static gradient selection)
                 if not self.do_dynamic_gradient_selection:
@@ -313,36 +297,5 @@ class Unbias(PCGUMixin):
 
         return final_output, logits
 
-    def _lm_backprop(
-        self,
-        input_ids,
-        attention_mask,
-        labels,
-    ):
-        """
-        Perform backpropagation for causal language modeling.
-
-        Args:
-        ----------
-            input_ids: Input token IDs
-            attention_mask: Attention mask for the input
-            labels: Target labels for language modeling loss
-
-        Returns:
-            Negative loss value (used for gradient ascent in unlearning)
-        """
-        # Move all tensors to the appropriate device
-        input_ids = input_ids.to(self.device)
-        attention_mask = attention_mask.to(self.device)
-        labels = labels.to(self.device)
-
-        self.model.zero_grad()
-        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-
-        # Negate loss for gradient ascent (unlearning)
-        loss = -outputs.loss
-        loss.backward()
-
-        return loss
     
     
