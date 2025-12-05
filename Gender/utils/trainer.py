@@ -79,7 +79,7 @@ class Unbias(PCGUMixin):
         if self.sim_batch_size == -1: 
             self.sim_batch_size =self.batch_size
 
-        if self.do_dynamic_gradient_selection: 
+        if self.do_dynamic_gradient_selection: # force combined gradient 
             self.which_grad = "combined"
 
         if self.sim_batch_size is not None and (self.sim_batch_size<=0 or self.sim_batch_size%self.batch_size!=0): 
@@ -112,7 +112,7 @@ class Unbias(PCGUMixin):
                 self.optimizer.zero_grad()
 
                 # Process disadvantaged group sequences
-                if self.is_mlm: # masked 
+                if self.is_mlm: # masked langugage modeling 
                     disadv_logits = self._mlm_backprop(
                                         input_ids=disadv_seqs,
                                         attention_mask=disadv_att_mask,
@@ -120,11 +120,6 @@ class Unbias(PCGUMixin):
                                         target_tokens=disadv_target,
                                         vocab_size=vocab_size,
                                         do_backprop=not self.do_dynamic_gradient_selection)[1]
-                else: # causal
-                    self._lm_backprop(
-                                        input_ids=disadv_seqs,
-                                        attention_mask=disadv_att_mask,
-                                        labels=disadv_labels,)
 
                 # Capture gradients for disadvantaged group (static gradient selection)
                 if not self.do_dynamic_gradient_selection:
@@ -139,11 +134,6 @@ class Unbias(PCGUMixin):
                                         target_tokens=adv_target,
                                         vocab_size=vocab_size,
                                         do_backprop=not self.do_dynamic_gradient_selection,)[1]
-                else:
-                    self._lm_backprop(
-                        input_ids=adv_seqs,
-                        attention_mask=adv_att_mask,
-                        labels=adv_labels,)
 
                 # Capture gradients for advantaged group (static gradient selection)
                 if not self.do_dynamic_gradient_selection:
@@ -272,37 +262,3 @@ class Unbias(PCGUMixin):
             final_output.backward()
 
         return final_output, logits
-
-    def _lm_backprop(
-        self,
-        input_ids,
-        attention_mask,
-        labels,
-    ):
-        """
-        Perform backpropagation for causal language modeling.
-
-        Args:
-        ----------
-            input_ids: Input token IDs
-            attention_mask: Attention mask for the input
-            labels: Target labels for language modeling loss
-
-        Returns:
-            Negative loss value (used for gradient ascent in unlearning)
-        """
-        # Move all tensors to the appropriate device
-        input_ids = input_ids.to(self.device)
-        attention_mask = attention_mask.to(self.device)
-        labels = labels.to(self.device)
-
-        self.model.zero_grad()
-        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-
-        # Negate loss for gradient ascent (unlearning)
-        loss = -outputs.loss
-        loss.backward()
-
-        return loss
-    
-    
