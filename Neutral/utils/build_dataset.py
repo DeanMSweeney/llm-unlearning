@@ -90,6 +90,37 @@ def load_sents_crows(filename: str):
     sent_pairs = [(row[1], row[2]) for row in lines]
     return sent_pairs
 
+def load_sents_hol(filename: str) -> List[Tuple]: 
+    """
+    Load sentences from Holistic bias tsv file.
+    Returns list of (Male, Female, Neutral) tuples.
+    """
+    sent_triples = []
+    triple_indices = [(3, 27, 51), (7, 31, 49), (9, 33, 53), (11, 35, 55),
+                  (13, 37, 55), (15, 39, 57), (17, 41, 59),
+                  (23, 47, 63)]
+
+    # woman 3, man 27, person 51
+    # gal 7, guy 31, individual 49
+    # girl 9, boy 33, kid 53
+    # mother 11, father 35, parent 55
+    # mom 13, dad 37, parent 55
+    # daughter 15, son 39, child 57
+    # wife 17, husband 41, spouse 59
+    # grandmother 19, gradfather 43, grandparent 61 - tokens arent same, so remove
+    # grandma 21, grandpa 45, grandparent 61 - tokens arent same, so remove
+    # sister 23, brother 47, sibling 63
+    
+    with open(filename, 'r', encoding='utf-8') as f:
+        for line in f.readlines()[1:]: 
+            if line: 
+                split_line = line.strip().split('\t')
+                if split_line[3] == split_line[5]: continue
+                for (a,b,c) in triple_indices:
+                    sent_triples.append((split_line[b], split_line[a], split_line[c])) # male, female, neutral
+
+    return sent_triples
+
 # ============================================================================
 # Dataset Classes
 # ============================================================================
@@ -371,6 +402,128 @@ class WGDataset(data.Dataset):
                     continue
                 else:  # Found the differing position (gendered pronoun)
                     return i, (tokenized_male, m), (tokenized_female, f), (tokenized_neutral, n)
+        return None, None, None, None
+
+    def __getitem__(self, i):
+        return self.examples[i]
+
+    def __len__(self):
+        return len(self.examples)
+
+    @staticmethod
+    def collate_batch_creator(tokenizer):
+        """
+        Creates collate function that keeps male/female/neutral sentences separate.
+        Returns tuple triples for sequences, masks, target tokens, and labels.
+        This allows comparing model predictions across all three gender variants.
+        """
+        def collate_batch(batch):
+            sent_triples, inds, target_token_triples = [list(unzipped) for unzipped in zip(*batch)]
+            male_sents, female_sents, neutral_sents = [list(unzipped) for unzipped in zip(*sent_triples)]
+            male_targets, female_targets, neutral_targets = [list(unzipped) for unzipped in zip(*target_token_triples)]
+
+            male_seqs = [torch.tensor(sent) for sent in male_sents]
+            female_seqs = [torch.tensor(sent) for sent in female_sents]
+            neutral_seqs = [torch.tensor(sent) for sent in neutral_sents]
+            inds = torch.LongTensor(inds)
+            male_target_tokens = torch.LongTensor(male_targets)
+            female_target_tokens = torch.LongTensor(female_targets)
+            neutral_target_tokens = torch.LongTensor(neutral_targets)
+
+            # Pad sequences separately for each gender variant
+            padded_male_seqs = nn.utils.rnn.pad_sequence(male_seqs, batch_first=True, padding_value=tokenizer.pad_token_id)
+            padded_female_seqs = nn.utils.rnn.pad_sequence(female_seqs, batch_first=True, padding_value=tokenizer.pad_token_id)
+            padded_neutral_seqs = nn.utils.rnn.pad_sequence(neutral_seqs, batch_first=True, padding_value=tokenizer.pad_token_id)
+
+            # Create attention masks
+            male_attention_masks = torch.ones_like(padded_male_seqs)
+            female_attention_masks = torch.ones_like(padded_female_seqs)
+            neutral_attention_masks = torch.ones_like(padded_neutral_seqs)
+            male_attention_masks[padded_male_seqs==tokenizer.pad_token_id] = 0
+            female_attention_masks[padded_female_seqs==tokenizer.pad_token_id] = 0
+            neutral_attention_masks[padded_neutral_seqs==tokenizer.pad_token_id] = 0
+
+            # Create labels
+            male_labels = padded_male_seqs.detach().clone()
+            male_labels[padded_male_seqs==tokenizer.pad_token_id] = PAD_VALUE
+            female_labels = padded_female_seqs.detach().clone()
+            female_labels[padded_female_seqs==tokenizer.pad_token_id] = PAD_VALUE
+            neutral_labels = padded_neutral_seqs.detach().clone()
+            neutral_labels[padded_neutral_seqs==tokenizer.pad_token_id] = PAD_VALUE
+
+            return (padded_male_seqs, padded_female_seqs, padded_neutral_seqs), \
+                    (male_attention_masks, female_attention_masks, neutral_attention_masks), \
+                    inds, \
+                    (male_target_tokens, female_target_tokens, neutral_target_tokens), \
+                    (male_labels, female_labels, neutral_labels)
+        return collate_batch
+
+
+class TrainingDataset(data.Dataset):
+    """
+    Loads sentences from either the WinnoGender or Holistic bias dataset or both.
+    Each example has male/female/neutral variants.
+    """
+    def __init__(self, winno_dataset_file, hol_dataset_file, tokenizer, max_len=32):
+        """ 
+        If both winno and holistic data files are provided, then sentences from both
+        are included in the dataloader for training. Alternately, you can provide
+        `None` as input into either winno_dataset_file or hol_dataset_file to exclude
+        sentences from either.
+        """
+        super().__init__()
+        self.tokenizer = tokenizer
+        self.max_len = max_len
+        
+        sent_triples = []
+        if winno_dataset_file is not None:
+            sent_triples.extend(load_sents_wg(winno_dataset_file)[0])
+        if hol_dataset_file is not None:
+            sent_triples.extend(load_sents_hol(hol_dataset_file))
+            np.random.shuffle(sent_triples)
+
+        tokenized_mask = tokenizer('[MASK]', add_special_tokens=False)['input_ids'][0]
+
+        # Process sentence triples and add masked token
+        sent_trips = []
+        inds = []
+        target_token_pairs = []
+        for sent_trip in sent_triples:
+            male, female, neutral = sent_trip
+            ind, (t_male, m), (t_female, f), (t_neutral, n) = self._tokenize_and_find_diff(male, female, neutral)
+            if ind is None:
+                continue
+        
+            sent_trips.append((t_male, t_female, t_neutral))
+            inds.append(ind)
+            target_token_pairs.append((m, f, n))
+
+        # Replace gendered pronouns with [MASK]
+        for (t_male, t_female, t_neutral), ind in zip(sent_trips, inds):
+            t_male[ind] = tokenized_mask
+            t_female[ind] = tokenized_mask
+            t_neutral[ind] = tokenized_mask
+
+        self.examples = list(zip(sent_trips, inds, target_token_pairs))
+
+
+    def _tokenize_and_find_diff(self, male, female, neutral):
+        """
+        Tokenize sentence triple and find the position where they differ (gendered pronoun).
+        Returns the index and the differing tokens for each variant.
+        """
+        tokenized_male = self.tokenizer(male, add_special_tokens=False)['input_ids'][:self.max_len]
+        tokenized_female = self.tokenizer(female, add_special_tokens=False)['input_ids'][:self.max_len]
+        tokenized_neutral = self.tokenizer(neutral, add_special_tokens=False)['input_ids'][:self.max_len]
+
+        if len(tokenized_male)==len(tokenized_female)==len(tokenized_neutral):
+            for i, (m, f, n) in enumerate(zip(tokenized_male, tokenized_female, tokenized_neutral)):
+                if m==f==n:
+                    continue
+                else:  # Found the differing position (gendered pronoun)
+                    return i, (tokenized_male, m), (tokenized_female, f), (tokenized_neutral, n)
+        else: print("length does not match")
+        print(male, female, neutral)
         return None, None, None, None
 
     def __getitem__(self, i):
