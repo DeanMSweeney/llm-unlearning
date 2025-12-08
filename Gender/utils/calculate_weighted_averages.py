@@ -1,5 +1,6 @@
 import json
 import re
+import argparse
 
 def calculate_weighted_averages(log_file_path):
     """
@@ -88,5 +89,8 @@ def calculate_weighted_averages(log_file_path):
 
 
 if __name__ == "__main__":
-    log_file = "/Users/deanmsweeney/Documents/UM-Google Drive/Classes/EECS 598/llm-unlearning/Gender/logs/evaluate_models_bert-base-cased.log"
-    results = calculate_weighted_averages(log_file)
+    parser = argparse.ArgumentParser(description='Calculate weighted averages of SS, LMS, and ICAT scores from log file')
+    parser.add_argument('log_file', type=str, help='Path to the log file to analyze')
+
+    args = parser.parse_args()
+    results = calculate_weighted_averages(args.log_file)
