@@ -3,8 +3,10 @@ src/models-trial/
 __pycache__/
 *.pyc
 *.sh
+*.pdf
 
 *results*/
 models*/
 base/
 logs0/
+cache/
