@@ -1,11 +1,12 @@
 """
-Main entry point for bias mitigation through gradient-based unlearning.
-Uses WinoGender dataset to reduce gender bias in language models by selectively
-updating parameters to reduce the model's preference for stereotypical gender associations.
+    Main entry point for bias mitigation through gradient-based unlearning.
+    Uses WinoGender dataset to reduce gender bias in language models by selectively
+    updating parameters to reduce the model's preference for stereotypical gender associations.
 """
 import os
 from sqlite3 import NotSupportedError
 import torch
+import numpy as np
 import torch.utils.data as data
 import torch.optim as optim
 import torch.nn.functional as F
@@ -14,7 +15,7 @@ import argparse
 import logging
 from tqdm import tqdm
 import sys
-from utils.build_dataset import WGDataset
+from utils.build_dataset import WGDataset, TrainingDataset
 from utils.utils import set_random_seed
 from utils.consts import PAD_TOKEN, MASK_TOKEN
 from utils.trainer import Unbias
@@ -79,8 +80,9 @@ def main(
     model.to(device)
 
     # Load WinoGender dataset for bias evaluation and mitigation
-    dataset = WGDataset('../data/wg.tsv', '../data/wg_stats.tsv', tokenizer)
-    dataloader = data.DataLoader(dataset, batch_size=batch_size, collate_fn=WGDataset.collate_batch_creator(tokenizer),
+    #dataset = WGDataset('../data/wg.tsv', '../data/wg_stats.tsv', tokenizer)
+    dataset = TrainingDataset(winno_dataset_file='../data/wg.tsv', hol_dataset_file='../data/holistic_ability_groups.tsv', tokenizer=tokenizer)
+    dataloader = data.DataLoader(dataset, batch_size=batch_size, collate_fn=TrainingDataset.collate_batch_creator(tokenizer),
                                 num_workers=num_workers,
                                 )
 
