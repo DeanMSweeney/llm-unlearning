@@ -23,22 +23,22 @@ class PCGUMixin:
         scores = []
         for param_name, indices in self.param_partition: 
             # Retrieve gradients for the current parameter
-            self.grad_1 = self.grads_1[param_name]
-            self.grad_2 = self.grads_2[param_name]
+            g1 = self.grads_1[param_name]
+            g2 = self.grads_2[param_name]
 
             # If gradients don't exist, assign a large similarity score to exclude this parameter
-            if self.grad_1 is None or self.grad_2 is None:
+            if g1 is None or g2 is None:
                 scores.append(torch.Tensor([5]).squeeze())
                 continue
 
             # If this parameter is partitioned, extract the relevant gradient indices
             if indices is not None:
-                self.grad_1 = self.grad_1[indices]
-                self.grad_2 = self.grad_2[indices]
+                g1 = g1[indices]
+                g2 = g2[indices]
 
             # Compute cosine similarity between the two gradients
             # Lower similarity indicates more conflicting updates (more influential)
-            cosine_sim = F.cosine_similarity(self.grad_1, self.grad_2, dim=-1).detach().cpu()
+            cosine_sim = F.cosine_similarity(g1, g2, dim=-1).detach().cpu()
             scores.append(cosine_sim)
 
         # Select the top k most influential parameters based on similarity scores

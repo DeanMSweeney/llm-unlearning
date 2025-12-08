@@ -89,7 +89,7 @@ class Unbias(PCGUMixin):
         params_map = get_params_map(self.model)
         param_partition = create_param_partition(params_map, dim_to_agg=self.agg_dim)
 
-        for epoch in (range(self.start_at_epoch, self.num_epochs)):
+        for epoch in tqdm(range(self.start_at_epoch, self.num_epochs)):
             #logger.info(f'On epoch {epoch+1}/{self.num_epochs}')
             self.model.train()
 
@@ -99,7 +99,7 @@ class Unbias(PCGUMixin):
             curr_female_grads = None
             curr_neutral_grads = None
 
-            for batch in self.dataloader:
+            for batch in (self.dataloader):
                 # Unpack batch data for all three gender variants
                 # Each batch contains triples of sequences for multi-class bias comparison
                 (
@@ -122,25 +122,22 @@ class Unbias(PCGUMixin):
                                         vocab_size=vocab_size,
                                         do_backprop=not self.do_dynamic_gradient_selection)[1]
 
-                # Capture gradients for male variant (static gradient selection)
-                if not self.do_dynamic_gradient_selection:
-                    male_grads = get_all_model_grads(self.model)
-
-                # Process female variant sequences
-                if self.is_mlm:
+                    # Capture gradients for male variant (static gradient selection)
+                    if not self.do_dynamic_gradient_selection:
+                        male_grads = get_all_model_grads(self.model)
+                        
                     female_logits = self._mlm_backprop(
                                         input_ids=female_seqs,
                                         attention_mask=female_att_mask,
                                         indices=inds,
                                         target_tokens=female_target,
-                                        vocab_size=vocab_size,)
+                                        vocab_size=vocab_size,
+                                        do_backprop=not self.do_dynamic_gradient_selection,)[1]
 
-                # Capture gradients for female variant (static gradient selection)
-                if not self.do_dynamic_gradient_selection:
-                    female_grads = get_all_model_grads(self.model)
+                    # Capture gradients for female variant (static gradient selection)
+                    if not self.do_dynamic_gradient_selection:
+                        female_grads = get_all_model_grads(self.model)
 
-                # Process neutral variant sequences
-                if self.is_mlm:
                     neutral_logits = self._mlm_backprop(
                                         input_ids=neutral_seqs,
                                         attention_mask=neutral_att_mask,
@@ -149,14 +146,14 @@ class Unbias(PCGUMixin):
                                         vocab_size=vocab_size,
                                         do_backprop=not self.do_dynamic_gradient_selection,)[1]
 
-                # Capture gradients for neutral variant (static gradient selection)
-                if not self.do_dynamic_gradient_selection:
-                    neutral_grads = get_all_model_grads(self.model)
+                    # Capture gradients for neutral variant (static gradient selection)
+                    if not self.do_dynamic_gradient_selection:
+                        neutral_grads = get_all_model_grads(self.model)
 
                 # Dynamic gradient selection: minimize variance across all three gender variants
                 if self.do_dynamic_gradient_selection:
                     # Compute mean logit across all three variants
-                    mean_logits = (male_logits + female_logits + neutral_logits) / 3
+                    mean_logits = (male_logits.detach() + female_logits.detach() + neutral_logits.detach()) / 3
 
                     # Create multipliers that push each variant toward the mean
                     # Positive multiplier if below mean (push up), negative if above mean (push down)

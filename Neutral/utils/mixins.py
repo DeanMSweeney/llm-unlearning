@@ -24,40 +24,42 @@ class PCGUMixin:
         scores = []
         for param_name, indices in self.param_partition:
             # Retrieve gradients for the current parameter
-            self.grad_1 = self.grads_1[param_name]
-            self.grad_2 = self.grads_2[param_name]
-            self.grad_3 = self.grads_3[param_name] if self.grads_3 is not None else None
+            g1 = self.grads_1[param_name]
+            g2 = self.grads_2[param_name]
+            g3 = self.grads_3[param_name] if self.grads_3 is not None else None
 
             # If gradients don't exist, assign a large similarity score to exclude this parameter
-            if self.grad_1 is None or self.grad_2 is None:
+            if g1 is None or g2 is None:
                 scores.append(torch.Tensor([5]).squeeze())
                 continue
 
             # If this parameter is partitioned, extract the relevant gradient indices
             if indices is not None:
-                self.grad_1 = self.grad_1[indices]
-                self.grad_2 = self.grad_2[indices]
-                if self.grad_3 is not None:
-                    self.grad_3 = self.grad_3[indices]
+                g1 = g1[indices]
+                g2 = g2[indices]
+                if g3 is not None:
+                    g3 = g3[indices]
 
-            # For three-class case: compute variance across gradients
-            if self.grad_3 is not None:
-                # Stack gradients and compute variance
-                # Higher variance means more disagreement across classes
-                grad_stack = torch.stack([self.grad_1, self.grad_2, self.grad_3])
-                variance = torch.var(grad_stack, dim=0).mean().detach().cpu()
-                # Negate variance so we can still use topk with largest=False
-                # (we want high variance = low score for consistent selection)
-                scores.append(-variance)
+            # For three-class case: compute range (max - min) across gradients
+            if g3 is not None:
+                # Stack gradients and compute range (much faster than variance for large tensors)
+                # Higher range means more disagreement across classes
+                grad_stack = torch.stack([g1, g2, g3])
+                max_vals = grad_stack.max(dim=0)[0]
+                min_vals = grad_stack.min(dim=0)[0]
+                spread = (max_vals - min_vals).mean().detach()
+                # Negate spread so we can still use topk with largest=False
+                # (we want high spread = low score for consistent selection)
+                scores.append(-spread)
             # For two-class case: compute cosine similarity
             else:
                 # Lower similarity indicates more conflicting updates (more influential)
-                cosine_sim = F.cosine_similarity(self.grad_1, self.grad_2, dim=-1).detach().cpu()
+                cosine_sim = F.cosine_similarity(g1, g2, dim=-1).detach()
                 scores.append(cosine_sim)
 
         # Select the top k most influential parameters based on similarity scores
         # Stack all similarity scores into a single tensor
-        sim_stack = torch.stack(scores)
+        sim_stack = torch.stack(scores).cpu()
 
         # Select the k parameters with the smallest similarity scores (largest=False)
         # For two-class: parameters where grad_1 and grad_2 disagree the most
