@@ -1,4 +1,6 @@
-# LLM Bias Unlearning
+# Machine Unlearning for Mitigating Social Biases in LLMs
+
+![Poster](poster.png)
 
 This repository contains an implementation of gradient-based unlearning techniques for mitigating gender bias in pre-trained language models. This work was completed as a class project for EECS 598, recreating the methods described in the PCGU (Parameter-Efficient Contrastive Gradient Unlearning) approach.
 
@@ -17,11 +19,17 @@ Key features:
 
 ## Project Structure
 
-- `Gender/` - Main implementation for gender bias unlearning
-  - `main.py` - Training entry point with gradient-based unlearning
+- `Binary/` - Binary classification implementation for bias unlearning
+  - `train.py` - Training entry point with gradient-based unlearning
   - `eval.py` - StereoSet evaluation pipeline
-  - `trainer.py` - Unbias trainer implementation
-  - `utils/` - Dataset builders and utility functions
+  - `eval_crows.py` - CrowS-Pairs evaluation
+  - `utils/` - Trainer, dataset builders, and utility functions
+- `MultiClass/` - Multi-class classification implementation
+  - `train.py` - Training pipeline
+  - `eval.py` - Evaluation scripts
+  - `utils/` - Supporting utilities
+- `data/` - Datasets for training and evaluation
+- `cache/` - Cached model outputs and intermediate results
 
 ## Original Work
 
