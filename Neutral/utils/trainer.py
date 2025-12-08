@@ -79,7 +79,7 @@ class Unbias(PCGUMixin):
         if self.sim_batch_size == -1: 
             self.sim_batch_size =self.batch_size
 
-        if self.do_dynamic_gradient_selection: # force combined gradient 
+        if self.do_dynamic_gradient_selection: 
             self.which_grad = "combined"
 
         if self.sim_batch_size is not None and (self.sim_batch_size<=0 or self.sim_batch_size%self.batch_size!=0): 
@@ -95,105 +95,139 @@ class Unbias(PCGUMixin):
 
             # Initialize batch counters and gradient accumulators
             curr_sim_batch_count = 0
-            curr_disadv_grads = None
-            curr_adv_grads = None
+            curr_male_grads = None
+            curr_female_grads = None
+            curr_neutral_grads = None
 
             for batch in self.dataloader:
-                # Unpack batch data for both disadvantaged and advantaged groups
-                # Each batch contains paired sequences for bias comparison
+                # Unpack batch data for all three gender variants
+                # Each batch contains triples of sequences for multi-class bias comparison
                 (
-                (disadv_seqs, adv_seqs),
-                (disadv_att_mask, adv_att_mask),
+                (male_seqs, female_seqs, neutral_seqs),
+                (male_att_mask, female_att_mask, neutral_att_mask),
                 inds,
-                (disadv_target, adv_target),
-                (disadv_labels, adv_labels)
+                (male_target, female_target, neutral_target),
+                (male_labels, female_labels, neutral_labels)
                 ) = batch
 
                 self.optimizer.zero_grad()
 
-                # Process disadvantaged group sequences
-                if self.is_mlm: # masked langugage modeling 
-                    disadv_logits = self._mlm_backprop(
-                                        input_ids=disadv_seqs,
-                                        attention_mask=disadv_att_mask,
+                # Process male variant sequences
+                if self.is_mlm: # masked
+                    male_logits = self._mlm_backprop(
+                                        input_ids=male_seqs,
+                                        attention_mask=male_att_mask,
                                         indices=inds,
-                                        target_tokens=disadv_target,
+                                        target_tokens=male_target,
                                         vocab_size=vocab_size,
                                         do_backprop=not self.do_dynamic_gradient_selection)[1]
 
-                # Capture gradients for disadvantaged group (static gradient selection)
+                # Capture gradients for male variant (static gradient selection)
                 if not self.do_dynamic_gradient_selection:
-                    disadv_grads = get_all_model_grads(self.model)
+                    male_grads = get_all_model_grads(self.model)
 
-                # Process advantaged group sequences
+                # Process female variant sequences
                 if self.is_mlm:
-                    adv_logits = self._mlm_backprop(
-                                        input_ids=adv_seqs,
-                                        attention_mask=adv_att_mask,
+                    female_logits = self._mlm_backprop(
+                                        input_ids=female_seqs,
+                                        attention_mask=female_att_mask,
                                         indices=inds,
-                                        target_tokens=adv_target,
+                                        target_tokens=female_target,
+                                        vocab_size=vocab_size,)
+
+                # Capture gradients for female variant (static gradient selection)
+                if not self.do_dynamic_gradient_selection:
+                    female_grads = get_all_model_grads(self.model)
+
+                # Process neutral variant sequences
+                if self.is_mlm:
+                    neutral_logits = self._mlm_backprop(
+                                        input_ids=neutral_seqs,
+                                        attention_mask=neutral_att_mask,
+                                        indices=inds,
+                                        target_tokens=neutral_target,
                                         vocab_size=vocab_size,
                                         do_backprop=not self.do_dynamic_gradient_selection,)[1]
 
-                # Capture gradients for advantaged group (static gradient selection)
+                # Capture gradients for neutral variant (static gradient selection)
                 if not self.do_dynamic_gradient_selection:
-                    adv_grads = get_all_model_grads(self.model)
+                    neutral_grads = get_all_model_grads(self.model)
 
-                # Dynamic gradient selection: only update parameters where disadvantaged < advantaged
+                # Dynamic gradient selection: minimize variance across all three gender variants
                 if self.do_dynamic_gradient_selection:
-                    # Identify truly disadvantaged examples (lower logits than advantaged)
-                    disadv_actually_disadv = disadv_logits < adv_logits
-                    # Create multiplier: +1 for truly disadvantaged, -1 otherwise
-                    multiplier = disadv_actually_disadv.float() * 2 - 1
+                    # Compute mean logit across all three variants
+                    mean_logits = (male_logits + female_logits + neutral_logits) / 3
 
-                    # Recompute with weighted gradients for disadvantaged group
+                    # Create multipliers that push each variant toward the mean
+                    # Positive multiplier if below mean (push up), negative if above mean (push down)
+                    male_multiplier = mean_logits - male_logits
+                    female_multiplier = mean_logits - female_logits
+                    neutral_multiplier = mean_logits - neutral_logits
+
+                    # Recompute with weighted gradients for male variant
                     self._mlm_backprop(
-                        input_ids=disadv_seqs,
-                        attention_mask=disadv_att_mask,
+                        input_ids=male_seqs,
+                        attention_mask=male_att_mask,
                         indices=inds,
-                        target_tokens=disadv_target,
+                        target_tokens=male_target,
                         vocab_size=vocab_size,
                         do_backprop=True,
-                        multiplier=multiplier) # add multiplier here 
-                    
-                    disadv_grads = get_all_model_grads(self.model)
+                        multiplier=male_multiplier)
 
-                    # Recompute with inverted weighted gradients for advantaged group
+                    male_grads = get_all_model_grads(self.model)
+
+                    # Recompute with weighted gradients for female variant
                     self._mlm_backprop(
-                        input_ids=adv_seqs,
-                        attention_mask=adv_att_mask,
+                        input_ids=female_seqs,
+                        attention_mask=female_att_mask,
                         indices=inds,
-                        target_tokens=adv_target,
+                        target_tokens=female_target,
                         vocab_size=vocab_size,
                         do_backprop=True,
-                        multiplier=-multiplier)
-                    
-                    adv_grads = get_all_model_grads(self.model)
+                        multiplier=female_multiplier)
+
+                    female_grads = get_all_model_grads(self.model)
+
+                    # Recompute with weighted gradients for neutral variant
+                    self._mlm_backprop(
+                        input_ids=neutral_seqs,
+                        attention_mask=neutral_att_mask,
+                        indices=inds,
+                        target_tokens=neutral_target,
+                        vocab_size=vocab_size,
+                        do_backprop=True,
+                        multiplier=neutral_multiplier)
+
+                    neutral_grads = get_all_model_grads(self.model)
 
                 # Accumulate gradients across batches
-                curr_disadv_grads = accumulate_grad(curr_disadv_grads, disadv_grads)
-                curr_adv_grads = accumulate_grad(curr_adv_grads, adv_grads)
+                curr_male_grads = accumulate_grad(curr_male_grads, male_grads)
+                curr_female_grads = accumulate_grad(curr_female_grads, female_grads)
+                curr_neutral_grads = accumulate_grad(curr_neutral_grads, neutral_grads)
 
                 curr_sim_batch_count += self.batch_size
 
                 # Apply optimizer step when similarity batch size is reached
                 if self.sim_batch_size is not None and curr_sim_batch_count >= self.sim_batch_size:
                     self.reduce_bias(
-                        model_params_map=params_map, 
-                        grads_1=curr_disadv_grads, 
-                        grads_2=curr_adv_grads, 
+                        model_params_map=params_map,
+                        grads_1=curr_male_grads,
+                        grads_2=curr_female_grads,
+                        grads_3=curr_neutral_grads,
                         param_partition=param_partition)
-                    
+
                     curr_sim_batch_count = 0
-                    curr_disadv_grads = None
-                    curr_adv_grads = None
+                    curr_male_grads = None
+                    curr_female_grads = None
+                    curr_neutral_grads = None
 
             # Apply final optimizer step for the epoch if using accumulated gradients
             if self.sim_batch_size is None:
                 self.reduce_bias(
-                        model_params_map=params_map, 
-                        grads_1=curr_disadv_grads, 
-                        grads_2=curr_adv_grads, 
+                        model_params_map=params_map,
+                        grads_1=curr_male_grads,
+                        grads_2=curr_female_grads,
+                        grads_3=curr_neutral_grads,
                         param_partition=param_partition)
 
             saved_model_dir = save_model(model=self.model, tokenizer=self.tokenizer, epoch=epoch+1, dedupe=self.dedupe)
@@ -262,3 +296,6 @@ class Unbias(PCGUMixin):
             final_output.backward()
 
         return final_output, logits
+
+    
+    

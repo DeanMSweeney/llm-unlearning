@@ -19,8 +19,9 @@ from utils.utils import set_random_seed
 from utils.consts import PAD_TOKEN, MASK_TOKEN
 from utils.trainer import Unbias
 
-print("Let's begin...")
 logger = logging.getLogger(__name__)
+
+# Add to silence warnings
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
