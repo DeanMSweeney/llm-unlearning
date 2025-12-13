@@ -1,7 +1,8 @@
 # Machine Unlearning for Mitigating Social Biases in LLMs
 
-This repository contains an implementation of gradient-based unlearning techniques for mitigating gender bias in pre-trained language models. This work was completed as a class project for EECS 598, recreating the methods described in 
-Yu, C., Jeoung, S., Kasi, A., Yu, P., & Ji, H. (2023), *Findings of the ACL*.
+Large language models (LLMs) inherit and amplify social biases present in their training data. This motivates the need for targeted debiasing methods that preserve model utility. In this repository, we reproduce the Partitioned Contrastive Gradient Unlearning (PCGU) method and extend it from binary gender bias to a multi-class setting that includes neutral demographic categories. We introduce a spread-based gradient importance metric to identify and selectively update parameters most responsible for multi-class bias. Experiments on BERT and RoBERTa show that the proposed multi-class PCGU approach achieves bias scores closest to the unbiased target while maintaining substantially higher language quality than existing debiasing methods.
+
+This work was completed as a class project for EECS 598 as an extension of the work described in Yu, C., Jeoung, S., Kasi, A., Yu, P., & Ji, H. (2023), *Findings of the ACL*.
 
 ![Poster](poster.png)
 
